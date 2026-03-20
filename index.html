@@ -377,7 +377,6 @@
       const loader = new GLTFLoader().setPath("./models/gltf/");
       const loaderExtras = new GLTFLoader().setPath("./models/");
 
-      // ====================== MAPA PRINCIPAL ======================
       loader.load(
         "abandoned_warehouse.glb",
         (gltf) => {
@@ -385,147 +384,143 @@
 
           const model = gltf.scene;
 
+          // ================== WAREHOUSE ==================
           model.position.set(0, 0, 0);
-          model.scale.set(0.7, 0.7, 0.7);
+          model.scale.set(1, 1, 1);
           scene.add(model);
 
           model.updateWorldMatrix(true, true);
 
-          // 🔥 OCTREE DEL MAPA
+          // ================== OCTREE ==================
           worldOctree.fromGraphNode(model);
 
-          // 🔥 BOUNDING BOX
+          // ================== BOUNDING ==================
           const box = new THREE.Box3().setFromObject(model);
           worldBounds = box;
 
-          console.log("BOUNDING BOX:", box);
-
-          // ====================== PISO EXTRA ======================
-          const size = new THREE.Vector3();
           const center = new THREE.Vector3();
-
-          box.getSize(size);
           box.getCenter(center);
 
+          const size = new THREE.Vector3();
+          box.getSize(size);
+
+          console.log("CENTER:", center);
+
+          // ================== PISO ==================
           const floor = new THREE.Mesh(
             new THREE.BoxGeometry(size.x, 0.2, size.z),
             new THREE.MeshBasicMaterial({ visible: false }),
           );
 
           floor.position.set(center.x, box.min.y + 0.1, center.z);
-
           scene.add(floor);
           worldOctree.fromGraphNode(floor);
 
-          // ====================== SPAWN ======================
-          const spawnX = box.min.x - 2;
+          // ================== SPAWN ==================
+          const spawnX = center.x;
           const spawnZ = center.z;
           const spawnY = box.min.y + 0.5;
 
           playerCollider.start.set(spawnX, spawnY, spawnZ);
           playerCollider.end.set(spawnX, spawnY + 0.5, spawnZ);
-
           camera.position.copy(playerCollider.end);
 
-          console.log("Octree construido ✅");
+          console.log("Octree listo ✅");
 
-          // ====================== MODELOS EXTRA ======================
-
-          // 🚗 CARRO 1
+          // ================== CARRO 1 ==================
           loaderExtras.load("car_scene.glb", (gltf) => {
             const car = gltf.scene;
 
-            car.position.set(10, worldBounds.min.y, -10);
-            car.scale.set(2, 2, 2);
+            car.position.set(center.x + 10, box.min.y + 0.2, center.z - 8);
+            car.scale.set(0.02, 0.02, 0.02);
 
             scene.add(car);
             worldOctree.fromGraphNode(car);
           });
 
-          // 🚙 CARRO 2 (pickup)
+          // ================== CARRO 2 ==================
           loaderExtras.load(
             "low_poly_car_-_chevrolet_c10_pickup_1963.glb",
             (gltf) => {
               const car2 = gltf.scene;
 
-              car2.position.set(15, worldBounds.min.y, 5);
-              car2.scale.set(2, 2, 2);
+              car2.position.set(center.x - 10, box.min.y + 0.2, center.z + 8);
+              car2.scale.set(0.02, 0.02, 0.02);
 
               scene.add(car2);
               worldOctree.fromGraphNode(car2);
             },
           );
 
-          // 🏚️ SHED
+          // ================== SHED ==================
           loaderExtras.load("worn_shed_pbr_game-ready.glb", (gltf) => {
             const shed = gltf.scene;
 
-            shed.position.set(-20, worldBounds.min.y, 20);
-            shed.scale.set(3, 3, 3);
+            shed.position.set(center.x - 15, box.min.y + 0.2, center.z - 12);
+            shed.scale.set(0.017, 0.017, 0.017);
 
             scene.add(shed);
             worldOctree.fromGraphNode(shed);
           });
 
+          // ================== ROCAS ==================
           loaderExtras.load("low_poly_rocks.glb", (gltf) => {
             const rock = gltf.scene;
 
-            for (let i = 0; i < 10; i++) {
+            const rockPositions = [
+              [6, 1, 6],
+              [-6, 1, 8],
+              [8, 1, -6],
+              [-8, 1, -4],
+              [10, 1, 0],
+            ];
+
+            rockPositions.forEach((pos) => {
               const r = rock.clone();
 
               r.position.set(
-                THREE.MathUtils.lerp(
-                  worldBounds.min.x,
-                  worldBounds.max.x,
-                  Math.random(),
-                ),
-                worldBounds.min.y,
-                THREE.MathUtils.lerp(
-                  worldBounds.min.z,
-                  worldBounds.max.z,
-                  Math.random(),
-                ),
+                center.x + pos[0],
+                box.min.y + pos[1],
+                center.z + pos[2],
               );
 
-              r.scale.set(2, 2, 2);
+              r.scale.set(1.5, 1.5, 1.5);
 
               scene.add(r);
               worldOctree.fromGraphNode(r);
-            }
+            });
           });
 
-          // 🌳 ÁRBOLES (MUCHOS)
+          // ================== ÁRBOLES ==================
           loaderExtras.load(
             "stylized_low_poly_tree_-_game-ready.glb",
             (gltf) => {
               const tree = gltf.scene;
 
-              for (let i = 0; i < 25; i++) {
+              const treePositions = [
+                [-12, 0, -12],
+                [12, 0, -12],
+                [-12, 0, 12],
+                [12, 0, 12],
+                [0, 0, 15],
+                [15, 0, 0],
+                [-15, 0, 0],
+              ];
+
+              treePositions.forEach((pos) => {
                 const t = tree.clone();
 
-                t.position.set(
-                  THREE.MathUtils.lerp(
-                    worldBounds.min.x,
-                    worldBounds.max.x,
-                    Math.random(),
-                  ),
-                  worldBounds.min.y,
-                  THREE.MathUtils.lerp(
-                    worldBounds.min.z,
-                    worldBounds.max.z,
-                    Math.random(),
-                  ),
-                );
+                t.position.set(center.x + pos[0], box.min.y, center.z + pos[2]);
 
-                t.scale.set(2, 2, 2);
+                t.scale.set(1.2, 1.2, 1.2);
 
                 scene.add(t);
                 worldOctree.fromGraphNode(t);
-              }
+              });
             },
           );
 
-          // ====================== DEBUG (OPCIONAL) ======================
+          // ================== DEBUG ==================
           const helper = new OctreeHelper(worldOctree, 0x00ff88);
           helper.material.opacity = 0.15;
           helper.material.transparent = true;
