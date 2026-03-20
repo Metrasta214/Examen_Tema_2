@@ -479,15 +479,30 @@
           const spread = 25;
 
           // 🔥 FUNCIÓN CLAVE (REUBICACIÓN)
-          function getValidPosition(x, z, minDist = 12, attempts = 15) {
+          function getValidPosition(x, z, minDist = 12) {
             let newX = x;
             let newZ = z;
 
-            for (let i = 0; i < attempts; i++) {
-              if (isFarEnough(newX, newZ, minDist)) break;
+            // offsets FIJOS (no random)
+            const offsets = [
+              [0, 0],
+              [5, 0],
+              [-5, 0],
+              [0, 5],
+              [0, -5],
+              [8, 8],
+              [-8, -8],
+            ];
 
-              newX += (Math.random() - 0.5) * 15;
-              newZ += (Math.random() - 0.5) * 15;
+            for (let i = 0; i < offsets.length; i++) {
+              const testX = x + offsets[i][0];
+              const testZ = z + offsets[i][1];
+
+              if (isFarEnough(testX, testZ, minDist)) {
+                newX = testX;
+                newZ = testZ;
+                break;
+              }
             }
 
             return { x: newX, z: newZ };
@@ -515,8 +530,8 @@
             (gltfCar2) => {
               const car2 = gltfCar2.scene;
 
-              let x = center.x - spread * 0.8;
-              let z = center.z + spread * 0.6;
+              let x = center.x - spread * 0.5;
+              let z = center.z + spread * 0.3;
 
               const valid = getValidPosition(x, z);
 
@@ -532,10 +547,8 @@
           loaderExtras.load("worn_shed_pbr_game-ready.glb", (gltfShed) => {
             const shed = gltfShed.scene;
 
-            let x = center.x - spread;
-            let z = center.z - spread;
-
-            const valid = getValidPosition(x, z);
+            let x = center.x - spread * 1.3; // más lejos
+            let z = center.z - spread * 0.5; // mover lateral
 
             const pos = placeObject(shed, valid.x, valid.z, 0.018);
             addPosition(pos.x, pos.z);
