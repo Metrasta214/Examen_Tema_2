@@ -42,15 +42,13 @@
 
     <script type="module">
       import * as THREE from "three";
-      import * as BufferGeometryUtils from "three/addons/utils/BufferGeometryUtils.js";
       import Stats from "three/addons/libs/stats.module.js";
-
       import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-
       import { Octree } from "three/addons/math/Octree.js";
       import { OctreeHelper } from "three/addons/helpers/OctreeHelper.js";
       import { Capsule } from "three/addons/math/Capsule.js";
 
+      // ================== CONFIGURACIÓN BASE ==================
       const scene = new THREE.Scene();
       scene.background = new THREE.Color(0x88ccee);
       scene.fog = new THREE.Fog(0x88ccee, 0, 50);
@@ -87,15 +85,35 @@
       stats.domElement.style.top = "0px";
       container.appendChild(stats.domElement);
 
-      const GRAVITY = 30; // bajé un poco para que sea más jugable con scale 0.05
-
+      // ================== VARIABLES GLOBALES ==================
+      const GRAVITY = 30;
       const NUM_SPHERES = 100;
       const SPHERE_RADIUS = 0.2;
       const STEPS_PER_FRAME = 5;
 
+      let worldBounds = null;
+      const worldOctree = new Octree();
+      const usedPositions = [];
+
+      const playerCollider = new Capsule(
+        new THREE.Vector3(0, 0.5, 0),
+        new THREE.Vector3(0, 3.5, 0),
+        0.5,
+      );
+
+      const playerVelocity = new THREE.Vector3();
+      const playerDirection = new THREE.Vector3();
+      let playerOnFloor = false;
+      let mouseTime = 0;
+
+      const keyStates = {};
+      const vector1 = new THREE.Vector3();
+      const vector2 = new THREE.Vector3();
+      const vector3 = new THREE.Vector3();
+
+      // ================== ESFERAS ==================
       const sphereGeometry = new THREE.IcosahedronGeometry(SPHERE_RADIUS, 5);
       const sphereMaterial = new THREE.MeshLambertMaterial({ color: 0xdede8d });
-
       const spheres = [];
       let sphereIdx = 0;
 
@@ -114,26 +132,7 @@
         });
       }
 
-      let worldBounds = null;
-      const worldOctree = new Octree();
-
-      // Cápsula ajustada para que funcione mejor con el modelo escalado
-      const playerCollider = new Capsule(
-        new THREE.Vector3(0, 0.1, 0),
-        new THREE.Vector3(0, 0.6, 0),
-        0.08,
-      );
-
-      const playerVelocity = new THREE.Vector3();
-      const playerDirection = new THREE.Vector3();
-      let playerOnFloor = false;
-      let mouseTime = 0;
-
-      const keyStates = {};
-      const vector1 = new THREE.Vector3();
-      const vector2 = new THREE.Vector3();
-      const vector3 = new THREE.Vector3();
-
+      // ================== CONTROLES Y EVENTOS ==================
       document.addEventListener("keydown", (e) => (keyStates[e.code] = true));
       document.addEventListener("keyup", (e) => (keyStates[e.code] = false));
 
@@ -163,6 +162,7 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
       });
 
+      // ================== LÓGICA DE FÍSICAS ==================
       function throwBall() {
         const sphere = spheres[sphereIdx];
         camera.getWorldDirection(playerDirection);
@@ -221,7 +221,6 @@
         if (!worldBounds) return;
 
         const padding = 0.2;
-
         const min = worldBounds.min;
         const max = worldBounds.max;
 
@@ -233,7 +232,6 @@
           min.z + padding,
           Math.min(max.z - padding, playerCollider.start.z),
         );
-
         playerCollider.end.x = Math.max(
           min.x + padding,
           Math.min(max.x - padding, playerCollider.end.x),
@@ -243,14 +241,14 @@
           Math.min(max.z - padding, playerCollider.end.z),
         );
 
-        // 🔥 MUY IMPORTANTE: evitar que caiga debajo del modelo
+        // Evitar que caiga debajo del modelo
         if (worldBounds && playerCollider.start.y < worldBounds.min.y) {
           playerCollider.start.y = worldBounds.min.y + 0.2;
           playerCollider.end.y = playerCollider.start.y + 1;
-
           playerVelocity.y = 0;
         }
       }
+
       function playerSphereCollision(sphere) {
         const center = vector1
           .addVectors(playerCollider.start, playerCollider.end)
@@ -340,10 +338,10 @@
         });
 
         spheresCollisions();
-
         spheres.forEach((s) => s.mesh.position.copy(s.collider.center));
       }
 
+      // ================== CONTROLES DE JUGADOR ==================
       function getForwardVector() {
         camera.getWorldDirection(playerDirection);
         playerDirection.y = 0;
@@ -373,7 +371,62 @@
         if (playerOnFloor && keyStates["Space"]) playerVelocity.y = 15;
       }
 
-      // ====================== LOADERS ======================
+      function teleportPlayerIfOob() {
+        if (camera.position.y < -10 && worldBounds) {
+          const center = new THREE.Vector3();
+          worldBounds.getCenter(center);
+          const offset = 2;
+          const spawnX = center.x;
+          const spawnZ = worldBounds.max.z + offset;
+          const spawnY = worldBounds.min.y + 0.3;
+
+          playerCollider.start.set(spawnX, spawnY, spawnZ);
+          playerCollider.end.set(spawnX, spawnY + 0.5, spawnZ);
+          playerVelocity.set(0, 0, 0);
+          camera.position.copy(playerCollider.end);
+        }
+      }
+
+      // ================== FUNCIONES DE UBICACIÓN ==================
+      function addPosition(x, z) {
+        usedPositions.push({ x, z });
+      }
+
+      function clampToBounds(x, z, margin = 2) {
+        const minX = worldBounds.min.x + margin;
+        const maxX = worldBounds.max.x - margin;
+        const minZ = worldBounds.min.z + margin;
+        const maxZ = worldBounds.max.z - margin;
+
+        return {
+          x: Math.max(minX, Math.min(maxX, x)),
+          z: Math.max(minZ, Math.min(maxZ, z)),
+        };
+      }
+
+      function isFarEnough(x, z, minDist = 12) {
+        return usedPositions.every((p) => {
+          const dx = p.x - x;
+          const dz = p.z - z;
+          return dx * dx + dz * dz > minDist * minDist;
+        });
+      }
+
+      function placeObject(object, x, z, scale = 1) {
+        const pos = clampToBounds(x, z);
+        object.scale.set(scale, scale, scale);
+        object.updateMatrixWorld(true);
+
+        const box = new THREE.Box3().setFromObject(object);
+        const offsetY = box.min.y;
+
+        object.position.set(pos.x, worldBounds.min.y - offsetY, pos.z);
+        object.position.y -= 0.05;
+
+        return pos;
+      }
+
+      // ================== CARGA DE MODELOS ==================
       const loader = new GLTFLoader().setPath("./models/gltf/");
       const loaderExtras = new GLTFLoader().setPath("./models/");
 
@@ -404,8 +457,6 @@
           const size = new THREE.Vector3();
           box.getSize(size);
 
-          console.log("CENTER:", center);
-
           // ================== PISO ==================
           const floor = new THREE.Mesh(
             new THREE.BoxGeometry(size.x, 0.2, size.z),
@@ -418,21 +469,41 @@
 
           // ================== SPAWN ==================
           const spawnX = center.x;
-          const spawnZ = center.z;
+          const spawnZ = box.max.z + 5;
           const spawnY = box.min.y + 0.5;
 
           playerCollider.start.set(spawnX, spawnY, spawnZ);
-          playerCollider.end.set(spawnX, spawnY + 0.5, spawnZ);
+          playerCollider.end.set(spawnX, spawnY + 1.5, spawnZ);
           camera.position.copy(playerCollider.end);
 
-          console.log("Octree listo ✅");
+          const spread = 25;
+
+          // 🔥 FUNCIÓN CLAVE (REUBICACIÓN)
+          function getValidPosition(x, z, minDist = 12, attempts = 15) {
+            let newX = x;
+            let newZ = z;
+
+            for (let i = 0; i < attempts; i++) {
+              if (isFarEnough(newX, newZ, minDist)) break;
+
+              newX += (Math.random() - 0.5) * 15;
+              newZ += (Math.random() - 0.5) * 15;
+            }
+
+            return { x: newX, z: newZ };
+          }
 
           // ================== CARRO 1 ==================
-          loaderExtras.load("car_scene.glb", (gltf) => {
-            const car = gltf.scene;
+          loaderExtras.load("car_scene.glb", (gltfCar) => {
+            const car = gltfCar.scene;
 
-            car.position.set(center.x + 10, box.min.y + 0.2, center.z - 8);
-            car.scale.set(0.02, 0.02, 0.02);
+            let x = center.x + spread * 0.8;
+            let z = center.z - spread * 0.6;
+
+            const valid = getValidPosition(x, z);
+
+            const pos = placeObject(car, valid.x, valid.z, 0.02);
+            addPosition(pos.x, pos.z);
 
             scene.add(car);
             worldOctree.fromGraphNode(car);
@@ -441,11 +512,16 @@
           // ================== CARRO 2 ==================
           loaderExtras.load(
             "low_poly_car_-_chevrolet_c10_pickup_1963.glb",
-            (gltf) => {
-              const car2 = gltf.scene;
+            (gltfCar2) => {
+              const car2 = gltfCar2.scene;
 
-              car2.position.set(center.x - 10, box.min.y + 0.2, center.z + 8);
-              car2.scale.set(0.02, 0.02, 0.02);
+              let x = center.x - spread * 0.8;
+              let z = center.z + spread * 0.6;
+
+              const valid = getValidPosition(x, z);
+
+              const pos = placeObject(car2, valid.x, valid.z, 0.02);
+              addPosition(pos.x, pos.z);
 
               scene.add(car2);
               worldOctree.fromGraphNode(car2);
@@ -453,38 +529,43 @@
           );
 
           // ================== SHED ==================
-          loaderExtras.load("worn_shed_pbr_game-ready.glb", (gltf) => {
-            const shed = gltf.scene;
+          loaderExtras.load("worn_shed_pbr_game-ready.glb", (gltfShed) => {
+            const shed = gltfShed.scene;
 
-            shed.position.set(center.x - 15, box.min.y + 0.2, center.z - 12);
-            shed.scale.set(0.017, 0.017, 0.017);
+            let x = center.x - spread;
+            let z = center.z - spread;
+
+            const valid = getValidPosition(x, z);
+
+            const pos = placeObject(shed, valid.x, valid.z, 0.018);
+            addPosition(pos.x, pos.z);
 
             scene.add(shed);
             worldOctree.fromGraphNode(shed);
           });
 
           // ================== ROCAS ==================
-          loaderExtras.load("low_poly_rocks.glb", (gltf) => {
-            const rock = gltf.scene;
+          loaderExtras.load("low_poly_rocks.glb", (gltfRocks) => {
+            const rock = gltfRocks.scene;
 
             const rockPositions = [
-              [6, 1, 6],
-              [-6, 1, 8],
-              [8, 1, -6],
-              [-8, 1, -4],
-              [10, 1, 0],
+              [10, 10],
+              [-10, 15],
+              [15, -10],
+              [-15, -5],
+              [20, 0],
             ];
 
-            rockPositions.forEach((pos) => {
+            rockPositions.forEach((posArr) => {
+              let x = center.x + posArr[0];
+              let z = center.z + posArr[1];
+
+              const valid = getValidPosition(x, z, 10);
+
               const r = rock.clone();
 
-              r.position.set(
-                center.x + pos[0],
-                box.min.y + pos[1],
-                center.z + pos[2],
-              );
-
-              r.scale.set(1.5, 1.5, 1.5);
+              const finalPos = placeObject(r, valid.x, valid.z, 4);
+              addPosition(finalPos.x, finalPos.z);
 
               scene.add(r);
               worldOctree.fromGraphNode(r);
@@ -494,61 +575,41 @@
           // ================== ÁRBOLES ==================
           loaderExtras.load(
             "stylized_low_poly_tree_-_game-ready.glb",
-            (gltf) => {
-              const tree = gltf.scene;
+            (gltfTree) => {
+              const tree = gltfTree.scene;
 
               const treePositions = [
-                [-12, 0, -12],
-                [12, 0, -12],
-                [-12, 0, 12],
-                [12, 0, 12],
-                [0, 0, 15],
-                [15, 0, 0],
-                [-15, 0, 0],
+                [-20, -20],
+                [20, -20],
+                [-20, 20],
+                [20, 20],
+                [0, 25],
+                [25, 0],
+                [-25, 0],
               ];
 
-              treePositions.forEach((pos) => {
+              treePositions.forEach((posArr) => {
+                let x = center.x + posArr[0];
+                let z = center.z + posArr[1];
+
+                const valid = getValidPosition(x, z, 15);
+
                 const t = tree.clone();
 
-                t.position.set(center.x + pos[0], box.min.y, center.z + pos[2]);
-
-                t.scale.set(1.2, 1.2, 1.2);
+                const finalPos = placeObject(t, valid.x, valid.z, 2.5); // 🔥 grandes
+                addPosition(finalPos.x, finalPos.z);
 
                 scene.add(t);
                 worldOctree.fromGraphNode(t);
               });
             },
           );
-
-          // ================== DEBUG ==================
-          const helper = new OctreeHelper(worldOctree, 0x00ff88);
-          helper.material.opacity = 0.15;
-          helper.material.transparent = true;
-          //scene.add(helper);
         },
         undefined,
         (error) => console.error("ERROR AL CARGAR EL MODELO", error),
       );
 
-      function teleportPlayerIfOob() {
-        if (camera.position.y < -10 && worldBounds) {
-          const center = new THREE.Vector3();
-          worldBounds.getCenter(center);
-
-          const offset = 2;
-
-          const spawnX = center.x;
-          const spawnZ = worldBounds.max.z + offset;
-          const spawnY = worldBounds.min.y + 0.3;
-
-          playerCollider.start.set(spawnX, spawnY, spawnZ);
-          playerCollider.end.set(spawnX, spawnY + 0.5, spawnZ);
-
-          playerVelocity.set(0, 0, 0);
-          camera.position.copy(playerCollider.end);
-        }
-      }
-
+      // ================== BUCLE DE ANIMACIÓN ==================
       function animate() {
         const deltaTime =
           Math.min(0.05, performance.now() / 1000 - (window.lastTime || 0)) /
@@ -558,7 +619,7 @@
         for (let i = 0; i < STEPS_PER_FRAME; i++) {
           controls(deltaTime);
           updatePlayer(deltaTime);
-          constrainPlayer(); // 👈 clave
+          constrainPlayer();
           updateSpheres(deltaTime);
           teleportPlayerIfOob();
         }
