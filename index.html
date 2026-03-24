@@ -471,88 +471,141 @@
       const enemies = [];
       const enemyCountEl = document.getElementById("enemy-count");
 
-      let sharedEnemyModel = null;
-      let sharedEnemyClips = {};
+      // Clips de animación compartidos (solo datos, no el skeleton)
+      // Se llenan UNA VEZ al cargar cada archivo y se reutilizan en todos los enemigos
+      const sharedClips = {
+        idle: null,
+        walk: null,
+        run: null,
+        dying: null,
+      };
 
-      // =====================================================================
-      // FIX: sistema de dos flags para evitar race condition
-      // worldReady   → warehouse.glb terminó y guardó la posición de spawn
-      // playerReady  → idle.glb terminó y asignó sharedEnemyModel
-      // Cuando AMBOS son true, se llama a trySpawnEnemies()
-      // =====================================================================
+      // Cuántos clips faltan por cargar
+      let clipsPending = 4;
+
+      // Posiciones de spawn pendientes (se guardan mientras los clips no están listos)
+      let pendingSpawns = [];
       let worldReady = false;
-      let playerReady = false;
-      let pendingEnemySpawns = []; // posiciones guardadas hasta que el modelo esté disponible
 
-      function trySpawnEnemies() {
-        if (!worldReady || !playerReady) return; // esperar a los dos
-        for (const pos of pendingEnemySpawns) spawnEnemy(pos);
-        pendingEnemySpawns = [];
+      function onClipLoaded() {
+        clipsPending--;
+        if (clipsPending === 0 && worldReady) flushPendingSpawns();
+      }
+
+      function flushPendingSpawns() {
+        for (const pos of pendingSpawns) spawnEnemy(pos);
+        pendingSpawns = [];
       }
 
       function updateEnemyCount() {
         enemyCountEl.textContent = enemies.length;
-        if (enemies.length === 0 && worldReady && playerReady) {
+        if (enemies.length === 0 && worldReady && clipsPending === 0) {
           document.getElementById("win-screen").style.display = "flex";
         }
       }
 
+      // Carga los 4 clips compartidos al inicio (independiente del jugador)
+      const enemyLoader = new GLTFLoader().setPath("./models/player/");
+
+      const _clipFiles = [
+        { file: "idle.glb", key: "idle" },
+        { file: "walk_left.glb", key: "walk" },
+        { file: "pistol_run.glb", key: "run" },
+        { file: "dying.glb", key: "dying" },
+      ];
+      _clipFiles.forEach(({ file, key }) => {
+        enemyLoader.load(
+          file,
+          (gltf) => {
+            let clip = gltf.animations[0];
+            // Quitar root motion igual que en el jugador
+            clip.tracks = clip.tracks.filter(
+              (t) => !t.name.toLowerCase().includes("position"),
+            );
+            sharedClips[key] = clip;
+            onClipLoaded();
+          },
+          undefined,
+          () => {
+            console.warn("⚠️ Clip enemigo no cargado:", file);
+            onClipLoaded();
+          },
+        );
+      });
+
+      // spawnEnemy: carga un GLB fresco para cada enemigo → skeleton limpio
       function spawnEnemy(position) {
-        if (!sharedEnemyModel) return;
+        enemyLoader.load(
+          "idle.glb",
+          (gltf) => {
+            const model = gltf.scene;
+            model.scale.set(1.5, 1.5, 1.5);
+            model.position.copy(position);
 
-        const model = sharedEnemyModel.clone();
-        model.scale.set(1.5, 1.5, 1.5);
-        model.position.copy(position);
-        scene.add(model);
+            // Tinte rojo en todos los materiales para distinguirlos del jugador
+            model.traverse((obj) => {
+              if (obj.isMesh && obj.material) {
+                const mats = Array.isArray(obj.material)
+                  ? obj.material
+                  : [obj.material];
+                mats.forEach((m) => {
+                  m = m.clone();
+                  obj.material = m;
+                  if (m.color)
+                    m.color
+                      .multiplyScalar(0.55)
+                      .lerp(new THREE.Color(0xff2200), 0.35);
+                });
+              }
+            });
 
-        const enemyMixer = new THREE.AnimationMixer(model);
+            scene.add(model);
+            const enemyMixer = new THREE.AnimationMixer(model);
 
-        const idleClip = sharedEnemyClips["idle"];
-        let idleAction = null;
-        if (idleClip) {
-          idleAction = enemyMixer.clipAction(idleClip);
-          idleAction.setLoop(THREE.LoopRepeat, Infinity);
-          idleAction.play();
-        }
+            function makeAction(clip, loop) {
+              if (!clip) return null;
+              const a = enemyMixer.clipAction(clip);
+              a.setLoop(loop, loop === THREE.LoopOnce ? 1 : Infinity);
+              if (loop === THREE.LoopOnce) a.clampWhenFinished = true;
+              a.timeScale = 5.0;
+              return a;
+            }
 
-        const walkClip = sharedEnemyClips["walk"];
-        let walkAction = null;
-        if (walkClip) {
-          walkAction = enemyMixer.clipAction(walkClip);
-          walkAction.setLoop(THREE.LoopRepeat, Infinity);
-          walkAction.weight = 0;
-        }
+            const idleAction = makeAction(sharedClips.idle, THREE.LoopRepeat);
+            const walkAction = makeAction(sharedClips.walk, THREE.LoopRepeat);
+            const runAction = makeAction(sharedClips.run, THREE.LoopRepeat);
+            const dyingAction = makeAction(sharedClips.dying, THREE.LoopOnce);
 
-        const dyingClip = sharedEnemyClips["dying"];
-        let dyingAction = null;
-        if (dyingClip) {
-          dyingAction = enemyMixer.clipAction(dyingClip);
-          dyingAction.setLoop(THREE.LoopOnce, 1);
-          dyingAction.clampWhenFinished = true;
-        }
+            if (idleAction) {
+              idleAction.play();
+            }
 
-        const enemy = {
-          mesh: model,
-          mixer: enemyMixer,
-          idleAction,
-          walkAction,
-          dyingAction,
-          activeAction: idleAction,
-          health: ENEMY_MAX_HP,
-          shootTimer: Math.random() * ENEMY_SHOOT_CD,
-          isDead: false,
-          removeTimer: null,
-        };
+            const enemy = {
+              mesh: model,
+              mixer: enemyMixer,
+              idleAction,
+              walkAction,
+              runAction,
+              dyingAction,
+              activeAction: idleAction,
+              health: ENEMY_MAX_HP,
+              shootTimer: Math.random() * ENEMY_SHOOT_CD,
+              isDead: false,
+              removeTimer: null,
+            };
 
-        enemies.push(enemy);
-        updateEnemyCount();
-        return enemy;
+            enemies.push(enemy);
+            updateEnemyCount();
+          },
+          undefined,
+          (e) => console.error("ERROR spawnEnemy", e),
+        );
       }
 
       function switchEnemyAnim(enemy, action) {
         if (!action || enemy.activeAction === action) return;
-        if (enemy.activeAction) enemy.activeAction.fadeOut(0.2);
-        action.reset().fadeIn(0.2).play();
+        if (enemy.activeAction) enemy.activeAction.fadeOut(0.15);
+        action.reset().fadeIn(0.15).play();
         enemy.activeAction = action;
       }
 
@@ -616,7 +669,10 @@
               _enemyDir,
               ENEMY_SPEED * deltaTime,
             );
-            switchEnemyAnim(enemy, enemy.walkAction || enemy.idleAction);
+            switchEnemyAnim(
+              enemy,
+              enemy.runAction || enemy.walkAction || enemy.idleAction,
+            );
           } else {
             switchEnemyAnim(enemy, enemy.idleAction);
             damagePlayer(ENEMY_DAMAGE * deltaTime);
@@ -1197,14 +1253,14 @@
 
           doneWarehouse();
 
-          // FIX: guardar posiciones de spawn y marcar el mundo como listo
+          // Guardar posiciones; spawn ocurre cuando los 4 clips estén listos
           const playerPos = new THREE.Vector3()
             .addVectors(playerCollider.start, playerCollider.end)
             .multiplyScalar(0.5);
           for (let i = 0; i < 5; i++) {
             const angle2 = (i / 5) * Math.PI * 2 + Math.random() * 0.5;
             const dist2 = 12 + Math.random() * 10;
-            pendingEnemySpawns.push(
+            pendingSpawns.push(
               new THREE.Vector3(
                 playerPos.x + Math.cos(angle2) * dist2,
                 box.min.y + 1,
@@ -1213,7 +1269,7 @@
             );
           }
           worldReady = true;
-          trySpawnEnemies(); // spawn si playerReady ya era true
+          if (clipsPending === 0) flushPendingSpawns();
         },
         undefined,
         (e) => console.error("ERROR WAREHOUSE", e),
@@ -1244,10 +1300,6 @@
         playerModel.scale.set(1.5, 1.5, 1.5);
         scene.add(playerModel);
 
-        // FIX: asignar modelo compartido para enemigos
-        sharedEnemyModel = gltf.scene.clone();
-        sharedEnemyClips["idle"] = gltf.animations[0];
-
         mixer = new THREE.AnimationMixer(playerModel);
         const idleAction = mixer.clipAction(gltf.animations[0]);
         idleAction.setLoop(THREE.LoopRepeat, Infinity);
@@ -1264,27 +1316,11 @@
 
         gunMesh = createGun();
 
-        // FIX: marcar player como listo e intentar spawn
-        playerReady = true;
-        trySpawnEnemies();
-
-        // Inicializar pools después de tener la escena lista
+        // Inicializar pools
         initBulletLinePool();
         initImpactPool();
 
         donePlayer();
-      });
-
-      const doneWalk = trackLoad("Cargando animaciones...");
-      playerLoader.load("walk_left.glb", (gltf) => {
-        sharedEnemyClips["walk"] = gltf.animations[0];
-        doneWalk();
-      });
-
-      const doneDying = trackLoad("Cargando animaciones...");
-      playerLoader.load("dying.glb", (gltf) => {
-        sharedEnemyClips["dying"] = gltf.animations[0];
-        doneDying();
       });
 
       // ✅ FUNCIÓN INTOCABLE
