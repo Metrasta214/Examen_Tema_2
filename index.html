@@ -25,10 +25,50 @@
       </ul>
     </nav>
     <div id="info">
-      Octree three.js demo - colisiones con modelo estático<br />
       MOUSE para mirar • WASD para mover • SPACE para saltar • Click para lanzar
-      bolas
+      bolas • K para dañarse
     </div>
+
+    <!-- ================== HUD DE VIDA ================== -->
+    <div
+      id="hud"
+      style="
+        position: absolute;
+        bottom: 30px;
+        left: 30px;
+        z-index: 999;
+        font-family: monospace;
+        color: white;
+        text-shadow: 1px 1px 3px black;
+      "
+    >
+      <div style="margin-bottom: 6px; font-size: 14px">❤️ VIDA</div>
+      <div
+        style="
+          width: 200px;
+          height: 18px;
+          background: #333;
+          border-radius: 4px;
+          overflow: hidden;
+          border: 1px solid #555;
+        "
+      >
+        <div
+          id="health-bar"
+          style="
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, #e53935, #ef9a9a);
+            transition: width 0.3s ease;
+            border-radius: 4px;
+          "
+        ></div>
+      </div>
+      <div id="health-text" style="font-size: 12px; margin-top: 4px">
+        100 / 100
+      </div>
+    </div>
+
     <div id="container"></div>
 
     <script type="importmap">
@@ -54,7 +94,7 @@
       scene.fog = new THREE.Fog(0x88ccee, 0, 50);
 
       const camera = new THREE.PerspectiveCamera(
-        70,
+        80,
         window.innerWidth / window.innerHeight,
         0.1,
         1000,
@@ -111,29 +151,51 @@
       const vector2 = new THREE.Vector3();
       const vector3 = new THREE.Vector3();
 
-      // ================== ESFERAS ==================
-      const sphereGeometry = new THREE.IcosahedronGeometry(SPHERE_RADIUS, 5);
-      const sphereMaterial = new THREE.MeshLambertMaterial({ color: 0xdede8d });
-      const spheres = [];
-      let sphereIdx = 0;
+      // ================== SISTEMA DE VIDA ==================
+      let playerHealth = 100;
+      let isDead = false;
 
-      for (let i = 0; i < NUM_SPHERES; i++) {
-        const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
-        sphere.castShadow = true;
-        sphere.receiveShadow = true;
-        scene.add(sphere);
-        spheres.push({
-          mesh: sphere,
-          collider: new THREE.Sphere(
-            new THREE.Vector3(0, -100, 0),
-            SPHERE_RADIUS,
-          ),
-          velocity: new THREE.Vector3(),
-        });
+      const healthBar = document.getElementById("health-bar");
+      const healthText = document.getElementById("health-text");
+
+      function updateHealthUI() {
+        const pct = Math.max(0, playerHealth);
+        healthBar.style.width = pct + "%";
+        healthText.textContent = pct + " / 100";
+        if (pct > 50) {
+          healthBar.style.background =
+            "linear-gradient(90deg, #e53935, #ef9a9a)";
+        } else if (pct > 25) {
+          healthBar.style.background =
+            "linear-gradient(90deg, #f57c00, #ffcc80)";
+        } else {
+          healthBar.style.background =
+            "linear-gradient(90deg, #b71c1c, #e53935)";
+        }
+      }
+
+      function damagePlayer(amount) {
+        if (isDead) return;
+        playerHealth = Math.max(0, playerHealth - amount);
+        updateHealthUI();
+        console.log("❤️ Vida:", playerHealth);
+        if (playerHealth <= 0) die();
+      }
+
+      function die() {
+        isDead = true;
+        playerVelocity.set(0, 0, 0);
+        switchAnimation("dying");
+        console.log("💀 PLAYER DEAD");
+        setTimeout(() => location.reload(), 3000);
       }
 
       // ================== CONTROLES Y EVENTOS ==================
-      document.addEventListener("keydown", (e) => (keyStates[e.code] = true));
+      // ✅ un solo listener que maneja keyStates y tecla K
+      document.addEventListener("keydown", (e) => {
+        keyStates[e.code] = true;
+        if (e.code === "KeyK") damagePlayer(50);
+      });
       document.addEventListener("keyup", (e) => (keyStates[e.code] = false));
 
       container.addEventListener("mousedown", () => {
@@ -162,6 +224,27 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
       });
 
+      // ================== ESFERAS ==================
+      const sphereGeometry = new THREE.IcosahedronGeometry(SPHERE_RADIUS, 5);
+      const sphereMaterial = new THREE.MeshLambertMaterial({ color: 0xdede8d });
+      const spheres = [];
+      let sphereIdx = 0;
+
+      for (let i = 0; i < NUM_SPHERES; i++) {
+        const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+        sphere.castShadow = true;
+        sphere.receiveShadow = true;
+        scene.add(sphere);
+        spheres.push({
+          mesh: sphere,
+          collider: new THREE.Sphere(
+            new THREE.Vector3(0, -100, 0),
+            SPHERE_RADIUS,
+          ),
+          velocity: new THREE.Vector3(),
+        });
+      }
+
       // ================== LÓGICA DE FÍSICAS ==================
       function throwBall() {
         const sphere = spheres[sphereIdx];
@@ -169,21 +252,18 @@
         sphere.collider.center
           .copy(playerCollider.end)
           .addScaledVector(playerDirection, playerCollider.radius * 1.5);
-
         const impulse =
           15 + 30 * (1 - Math.exp((mouseTime - performance.now()) * 0.001));
         sphere.velocity
           .copy(playerDirection)
           .multiplyScalar(impulse)
           .addScaledVector(playerVelocity, 2);
-
         sphereIdx = (sphereIdx + 1) % spheres.length;
       }
 
       function playerCollisions() {
         const result = worldOctree.capsuleIntersect(playerCollider);
         playerOnFloor = false;
-
         if (result) {
           playerOnFloor = result.normal.y > 0;
           if (!playerOnFloor) {
@@ -208,22 +288,68 @@
         } else {
           playerVelocity.y = Math.max(0, playerVelocity.y);
         }
-        playerVelocity.addScaledVector(playerVelocity, damping);
 
+        playerVelocity.addScaledVector(playerVelocity, damping);
         playerCollider.translate(
           playerVelocity.clone().multiplyScalar(deltaTime),
         );
         playerCollisions();
-        camera.position.copy(playerCollider.end);
+
+        if (playerModel) {
+          const center = new THREE.Vector3()
+            .addVectors(playerCollider.start, playerCollider.end)
+            .multiplyScalar(0.5);
+          playerModel.position.copy(center);
+          playerModel.position.y -= 1;
+          const dir = new THREE.Vector3();
+          camera.getWorldDirection(dir);
+          playerModel.rotation.y = Math.atan2(dir.x, dir.z);
+        }
+
+        const direction = new THREE.Vector3();
+        camera.getWorldDirection(direction);
+        const distance = 2.8; // 🔥 más cerca
+        const height = 1.2; // 🔥 altura del pecho
+        const sideOffset = 0.6; // 🔥 hombro (más natural)
+
+        const forward = new THREE.Vector3();
+        camera.getWorldDirection(forward);
+        forward.normalize();
+
+        // 🔥 centro del cuerpo (TORSO)
+        const torso = new THREE.Vector3()
+          .addVectors(playerCollider.start, playerCollider.end)
+          .multiplyScalar(0.5);
+
+        // atrás del jugador
+        const backward = forward.clone().multiplyScalar(-distance);
+
+        // lado derecho (hombro)
+        const right = new THREE.Vector3()
+          .crossVectors(forward, camera.up)
+          .normalize()
+          .multiplyScalar(sideOffset);
+
+        // posición final
+        const cameraPosition = torso.clone();
+        cameraPosition.add(backward);
+        cameraPosition.add(right);
+        cameraPosition.y += height;
+
+        camera.position.copy(cameraPosition);
+
+        // 🔥 mirar al torso ligeramente arriba
+        const target = torso.clone();
+        target.y += 0.6;
+
+        camera.lookAt(target);
       }
 
       function constrainPlayer() {
         if (!worldBounds) return;
-
         const padding = 0.2;
         const min = worldBounds.min;
         const max = worldBounds.max;
-
         playerCollider.start.x = Math.max(
           min.x + padding,
           Math.min(max.x - padding, playerCollider.start.x),
@@ -240,9 +366,7 @@
           min.z + padding,
           Math.min(max.z - padding, playerCollider.end.z),
         );
-
-        // Evitar que caiga debajo del modelo
-        if (worldBounds && playerCollider.start.y < worldBounds.min.y) {
+        if (playerCollider.start.y < worldBounds.min.y) {
           playerCollider.start.y = worldBounds.min.y + 0.2;
           playerCollider.end.y = playerCollider.start.y + 1;
           playerVelocity.y = 0;
@@ -255,7 +379,6 @@
           .multiplyScalar(0.5);
         const r = playerCollider.radius + sphere.collider.radius;
         const r2 = r * r;
-
         for (const point of [
           playerCollider.start,
           playerCollider.end,
@@ -272,10 +395,8 @@
             const v2 = vector3
               .copy(normal)
               .multiplyScalar(normal.dot(sphere.velocity));
-
             playerVelocity.add(v2).sub(v1);
             sphere.velocity.add(v1).sub(v2);
-
             const d = (r - Math.sqrt(d2)) / 2;
             sphere.collider.center.addScaledVector(normal, -d);
           }
@@ -289,7 +410,6 @@
               s2 = spheres[j];
             const d2 = s1.collider.center.distanceToSquared(s2.collider.center);
             const r2 = (s1.collider.radius + s2.collider.radius) ** 2;
-
             if (d2 < r2) {
               const normal = vector1
                 .subVectors(s1.collider.center, s2.collider.center)
@@ -300,10 +420,8 @@
               const v2 = vector3
                 .copy(normal)
                 .multiplyScalar(normal.dot(s2.velocity));
-
               s1.velocity.add(v2).sub(v1);
               s2.velocity.add(v1).sub(v2);
-
               const d =
                 (s1.collider.radius + s2.collider.radius - Math.sqrt(d2)) / 2;
               s1.collider.center.addScaledVector(normal, d);
@@ -317,7 +435,6 @@
         spheres.forEach((sphere) => {
           sphere.collider.center.addScaledVector(sphere.velocity, deltaTime);
           const result = worldOctree.sphereIntersect(sphere.collider);
-
           if (result) {
             sphere.velocity.addScaledVector(
               result.normal,
@@ -329,14 +446,12 @@
           } else {
             sphere.velocity.y -= GRAVITY * deltaTime;
           }
-
           sphere.velocity.addScaledVector(
             sphere.velocity,
             Math.exp(-1.5 * deltaTime) - 1,
           );
           playerSphereCollision(sphere);
         });
-
         spheresCollisions();
         spheres.forEach((s) => s.mesh.position.copy(s.collider.center));
       }
@@ -357,31 +472,20 @@
         return playerDirection;
       }
 
-      function controls(deltaTime) {
-        const speedDelta = deltaTime * (playerOnFloor ? 25 : 8);
-
-        if (keyStates["KeyW"])
-          playerVelocity.add(getForwardVector().multiplyScalar(speedDelta));
-        if (keyStates["KeyS"])
-          playerVelocity.add(getForwardVector().multiplyScalar(-speedDelta));
-        if (keyStates["KeyA"])
-          playerVelocity.add(getSideVector().multiplyScalar(-speedDelta));
-        if (keyStates["KeyD"])
-          playerVelocity.add(getSideVector().multiplyScalar(speedDelta));
-        if (playerOnFloor && keyStates["Space"]) playerVelocity.y = 15;
-      }
-
       function teleportPlayerIfOob() {
         if (camera.position.y < -10 && worldBounds) {
           const center = new THREE.Vector3();
           worldBounds.getCenter(center);
-          const offset = 2;
-          const spawnX = center.x;
-          const spawnZ = worldBounds.max.z + offset;
-          const spawnY = worldBounds.min.y + 0.3;
-
-          playerCollider.start.set(spawnX, spawnY, spawnZ);
-          playerCollider.end.set(spawnX, spawnY + 0.5, spawnZ);
+          playerCollider.start.set(
+            center.x,
+            worldBounds.min.y + 0.3,
+            worldBounds.max.z + 2,
+          );
+          playerCollider.end.set(
+            center.x,
+            worldBounds.min.y + 0.8,
+            worldBounds.max.z + 2,
+          );
           playerVelocity.set(0, 0, 0);
           camera.position.copy(playerCollider.end);
         }
@@ -393,21 +497,22 @@
       }
 
       function clampToBounds(x, z, margin = 2) {
-        const minX = worldBounds.min.x + margin;
-        const maxX = worldBounds.max.x - margin;
-        const minZ = worldBounds.min.z + margin;
-        const maxZ = worldBounds.max.z - margin;
-
         return {
-          x: Math.max(minX, Math.min(maxX, x)),
-          z: Math.max(minZ, Math.min(maxZ, z)),
+          x: Math.max(
+            worldBounds.min.x + margin,
+            Math.min(worldBounds.max.x - margin, x),
+          ),
+          z: Math.max(
+            worldBounds.min.z + margin,
+            Math.min(worldBounds.max.z - margin, z),
+          ),
         };
       }
 
       function isFarEnough(x, z, minDist = 12) {
         return usedPositions.every((p) => {
-          const dx = p.x - x;
-          const dz = p.z - z;
+          const dx = p.x - x,
+            dz = p.z - z;
           return dx * dx + dz * dz > minDist * minDist;
         });
       }
@@ -416,13 +521,8 @@
         const pos = clampToBounds(x, z);
         object.scale.set(scale, scale, scale);
         object.updateMatrixWorld(true);
-
         const box = new THREE.Box3().setFromObject(object);
-        const offsetY = box.min.y;
-
-        object.position.set(pos.x, worldBounds.min.y - offsetY, pos.z);
-        object.position.y -= 0.05;
-
+        object.position.set(pos.x, worldBounds.min.y - box.min.y - 0.05, pos.z);
         return pos;
       }
 
@@ -434,56 +534,58 @@
         "abandoned_warehouse.glb",
         (gltf) => {
           console.log("MODELO CARGADO ✅");
-
           const model = gltf.scene;
-
-          // ================== WAREHOUSE ==================
           model.position.set(0, 0, 0);
           model.scale.set(1, 1, 1);
           scene.add(model);
-
           model.updateWorldMatrix(true, true);
-
-          // ================== OCTREE ==================
           worldOctree.fromGraphNode(model);
 
-          // ================== BOUNDING ==================
           const box = new THREE.Box3().setFromObject(model);
           worldBounds = box;
-
           const center = new THREE.Vector3();
           box.getCenter(center);
+
+          function getSpawnPosition(
+            center,
+            minDistance = 10,
+            maxDistance = 25,
+          ) {
+            const angle = Math.random() * Math.PI * 2;
+
+            const distance =
+              minDistance + Math.random() * (maxDistance - minDistance);
+
+            const x = center.x + Math.cos(angle) * distance;
+            const z = center.z + Math.sin(angle) * distance;
+
+            return { x, z };
+          }
 
           const size = new THREE.Vector3();
           box.getSize(size);
 
-          // ================== PISO ==================
           const floor = new THREE.Mesh(
             new THREE.BoxGeometry(size.x, 0.2, size.z),
-            new THREE.MeshBasicMaterial({ visible: false }),
+            new THREE.MeshBasicMaterial(),
           );
-
           floor.position.set(center.x, box.min.y + 0.1, center.z);
           scene.add(floor);
+          floor.updateWorldMatrix(true, true);
           worldOctree.fromGraphNode(floor);
+          scene.remove(floor);
+          floor.geometry.dispose();
+          floor.material.dispose();
+          const spawn = getSpawnPosition(center, 15, 30);
 
-          // ================== SPAWN ==================
-          const spawnX = center.x;
-          const spawnZ = box.max.z + 5;
-          const spawnY = box.min.y + 0.5;
+          playerCollider.start.set(spawn.x, box.min.y + 1, spawn.z);
+          playerCollider.end.set(spawn.x, box.min.y + 2.5, spawn.z);
 
-          playerCollider.start.set(spawnX, spawnY, spawnZ);
-          playerCollider.end.set(spawnX, spawnY + 1.5, spawnZ);
+          camera.position.copy(playerCollider.end);
           camera.position.copy(playerCollider.end);
 
           const spread = 25;
-
-          // 🔥 FUNCIÓN CLAVE (REUBICACIÓN)
           function getValidPosition(x, z, minDist = 12) {
-            let newX = x;
-            let newZ = z;
-
-            // offsets FIJOS (no random)
             const offsets = [
               [0, 0],
               [5, 0],
@@ -493,141 +595,278 @@
               [8, 8],
               [-8, -8],
             ];
-
-            for (let i = 0; i < offsets.length; i++) {
-              const testX = x + offsets[i][0];
-              const testZ = z + offsets[i][1];
-
-              if (isFarEnough(testX, testZ, minDist)) {
-                newX = testX;
-                newZ = testZ;
-                break;
-              }
+            for (const [ox, oz] of offsets) {
+              if (isFarEnough(x + ox, z + oz, minDist))
+                return { x: x + ox, z: z + oz };
             }
-
-            return { x: newX, z: newZ };
+            return { x, z };
           }
 
-          // ================== CARRO 1 ==================
-          loaderExtras.load("car_scene.glb", (gltfCar) => {
-            const car = gltfCar.scene;
-
-            let x = center.x + spread * 0.8;
-            let z = center.z - spread * 0.6;
-
-            const valid = getValidPosition(x, z);
-
-            const pos = placeObject(car, valid.x, valid.z, 0.02);
-            addPosition(pos.x, pos.z);
-
+          loaderExtras.load("car_scene.glb", (g) => {
+            const car = g.scene;
+            const v = getValidPosition(
+              center.x + spread * 0.8,
+              center.z - spread * 0.6,
+            );
+            const p = placeObject(car, v.x, v.z, 0.02);
+            addPosition(p.x, p.z);
             scene.add(car);
             worldOctree.fromGraphNode(car);
           });
-
-          // ================== CARRO 2 ==================
           loaderExtras.load(
             "low_poly_car_-_chevrolet_c10_pickup_1963.glb",
-            (gltfCar2) => {
-              const car2 = gltfCar2.scene;
-
-              let x = center.x - spread * 0.5;
-              let z = center.z + spread * 0.3;
-
-              const valid = getValidPosition(x, z);
-
-              const pos = placeObject(car2, valid.x, valid.z, 0.02);
-              addPosition(pos.x, pos.z);
-
+            (g) => {
+              const car2 = g.scene;
+              const v = getValidPosition(
+                center.x - spread * 0.5,
+                center.z + spread * 0.3,
+              );
+              const p = placeObject(car2, v.x, v.z, 0.02);
+              addPosition(p.x, p.z);
               scene.add(car2);
               worldOctree.fromGraphNode(car2);
             },
           );
-
-          // ================== SHED ==================
-          loaderExtras.load("worn_shed_pbr_game-ready.glb", (gltfShed) => {
-            const shed = gltfShed.scene;
-
-            let x = center.x - spread * 1.3; // más lejos
-            let z = center.z - spread * 0.5; // mover lateral
-
-            const pos = placeObject(shed, valid.x, valid.z, 0.018);
-            addPosition(pos.x, pos.z);
-
+          loaderExtras.load("worn_shed_pbr_game-ready.glb", (g) => {
+            const shed = g.scene;
+            const v = getValidPosition(
+              center.x - spread * 1.3,
+              center.z - spread * 0.5,
+            );
+            const p = placeObject(shed, v.x, v.z, 0.018);
+            addPosition(p.x, p.z);
             scene.add(shed);
             worldOctree.fromGraphNode(shed);
           });
-
-          // ================== ROCAS ==================
-          loaderExtras.load("low_poly_rocks.glb", (gltfRocks) => {
-            const rock = gltfRocks.scene;
-
-            const rockPositions = [
+          loaderExtras.load("low_poly_rocks.glb", (g) => {
+            const rock = g.scene;
+            [
               [10, 10],
               [-10, 15],
               [15, -10],
               [-15, -5],
               [20, 0],
-            ];
-
-            rockPositions.forEach((posArr) => {
-              let x = center.x + posArr[0];
-              let z = center.z + posArr[1];
-
-              const valid = getValidPosition(x, z, 10);
-
+            ].forEach(([rx, rz]) => {
+              const v = getValidPosition(center.x + rx, center.z + rz, 10);
               const r = rock.clone();
-
-              const finalPos = placeObject(r, valid.x, valid.z, 4);
-              addPosition(finalPos.x, finalPos.z);
-
+              const fp = placeObject(r, v.x, v.z, 4);
+              addPosition(fp.x, fp.z);
               scene.add(r);
               worldOctree.fromGraphNode(r);
             });
           });
-
-          // ================== ÁRBOLES ==================
-          loaderExtras.load(
-            "stylized_low_poly_tree_-_game-ready.glb",
-            (gltfTree) => {
-              const tree = gltfTree.scene;
-
-              const treePositions = [
-                [-20, -20],
-                [20, -20],
-                [-20, 20],
-                [20, 20],
-                [0, 25],
-                [25, 0],
-                [-25, 0],
-              ];
-
-              treePositions.forEach((posArr) => {
-                let x = center.x + posArr[0];
-                let z = center.z + posArr[1];
-
-                const valid = getValidPosition(x, z, 15);
-
-                const t = tree.clone();
-
-                const finalPos = placeObject(t, valid.x, valid.z, 2.5); // 🔥 grandes
-                addPosition(finalPos.x, finalPos.z);
-
-                scene.add(t);
-                worldOctree.fromGraphNode(t);
-              });
-            },
-          );
+          loaderExtras.load("stylized_low_poly_tree_-_game-ready.glb", (g) => {
+            const tree = g.scene;
+            [
+              [-20, -20],
+              [20, -20],
+              [-20, 20],
+              [20, 20],
+              [0, 25],
+              [25, 0],
+              [-25, 0],
+            ].forEach(([tx, tz]) => {
+              const v = getValidPosition(center.x + tx, center.z + tz, 15);
+              const t = tree.clone();
+              const fp = placeObject(t, v.x, v.z, 2.5);
+              addPosition(fp.x, fp.z);
+              scene.add(t);
+              worldOctree.fromGraphNode(t);
+            });
+          });
         },
         undefined,
-        (error) => console.error("ERROR AL CARGAR EL MODELO", error),
+        (e) => console.error("ERROR AL CARGAR EL MODELO", e),
       );
+
+      // ================== PERSONAJE ==================
+      let mixer;
+      const actions = {};
+      let activeAction;
+      let playerModel;
+
+      const playerLoader = new GLTFLoader().setPath("./models/player/");
+
+      // ✅ mapa de archivos con nombres SIN espacios → nombre interno
+      const ANIM_FILES = [
+        { file: "walk_left.glb", name: "walk_left", loop: THREE.LoopRepeat },
+        { file: "walk_right.glb", name: "walk_right", loop: THREE.LoopRepeat },
+        { file: "pistol_run.glb", name: "run", loop: THREE.LoopRepeat },
+        { file: "pistol_jump.glb", name: "jump", loop: THREE.LoopOnce },
+        { file: "dying.glb", name: "dying", loop: THREE.LoopOnce },
+        {
+          file: "walking_backwards.glb",
+          name: "walk_back",
+          loop: THREE.LoopRepeat,
+        },
+      ];
+
+      playerLoader.load("idle.glb", (gltf) => {
+        playerModel = gltf.scene;
+        playerModel.scale.set(1.5, 1.5, 1.5);
+        scene.add(playerModel);
+
+        mixer = new THREE.AnimationMixer(playerModel);
+
+        const idleAction = mixer.clipAction(gltf.animations[0]);
+        idleAction.setLoop(THREE.LoopRepeat, Infinity);
+        actions["idle"] = idleAction;
+        idleAction.play();
+        activeAction = idleAction;
+        console.log("✅ Animación cargada: idle");
+
+        // cargar el resto DESPUÉS de que mixer existe
+        ANIM_FILES.forEach(({ file, name, loop }) =>
+          loadAnimation(file, name, loop),
+        );
+
+        mixer.addEventListener("finished", () => {
+          if (activeAction === actions["jump"]) switchAnimation("idle");
+        });
+      });
+
+      function loadAnimation(file, name, loopMode) {
+        playerLoader.load(
+          file,
+          (gltf) => {
+            let clip = gltf.animations[0];
+
+            // =========================
+            // 🔥 1. ELIMINAR ROOT MOTION
+            // =========================
+            clip.tracks = clip.tracks.filter((track) => {
+              return !track.name.toLowerCase().includes("position");
+            });
+
+            const action = mixer.clipAction(clip);
+
+            // =========================
+            // 🔥 2. LOOP CONFIG
+            // =========================
+            action.setLoop(
+              loopMode,
+              loopMode === THREE.LoopOnce ? 1 : Infinity,
+            );
+
+            if (loopMode === THREE.LoopOnce) {
+              action.clampWhenFinished = true;
+            }
+
+            // =========================
+            // 🔥 3. VELOCIDAD POR ANIMACIÓN
+            // =========================
+            switch (name) {
+              case "idle":
+                action.timeScale = 5.0;
+                break;
+
+              case "run": // pistol run
+                action.timeScale = 5.0;
+                break;
+
+              case "walk_left":
+                action.timeScale = 7.0;
+                break;
+
+              case "walk_right":
+                action.timeScale = 7.0;
+                break;
+
+              case "walk_back":
+                action.timeScale = 8.0;
+                break;
+
+              case "jump":
+                action.timeScale = 5.0;
+                break;
+
+              case "dying":
+                action.timeScale = 5.0;
+                break;
+
+              default:
+                action.timeScale = 5.0;
+            }
+
+            // =========================
+            // 🔥 4. EVITAR "REVERSE BUG"
+            // =========================
+            action.setEffectiveWeight(1);
+
+            actions[name] = action;
+
+            console.log(
+              "✅ Animación cargada:",
+              name,
+              "| speed:",
+              action.timeScale,
+            );
+          },
+          undefined,
+          () => console.warn("⚠️ No se pudo cargar:", file),
+        );
+      }
+
+      function switchAnimation(name) {
+        if (!actions[name]) return;
+        if (activeAction === actions[name]) return;
+        activeAction.fadeOut(0.2);
+        actions[name].reset().fadeIn(0.2).play();
+        activeAction = actions[name];
+      }
+
+      // ================== CONTROLES ==================
+      function controls(deltaTime) {
+        if (isDead) return;
+
+        const speedDelta = deltaTime * (playerOnFloor ? 25 : 8);
+        let moving = false;
+        let animTarget = "idle";
+
+        if (keyStates["KeyW"]) {
+          playerVelocity.add(getForwardVector().multiplyScalar(speedDelta));
+          animTarget = "run";
+          moving = true;
+        }
+        if (keyStates["KeyS"]) {
+          playerVelocity.add(getForwardVector().multiplyScalar(-speedDelta));
+          if (!moving) animTarget = "walk_left";
+          moving = true;
+        }
+        if (keyStates["KeyA"]) {
+          playerVelocity.add(getSideVector().multiplyScalar(-speedDelta));
+          if (!moving) animTarget = "walk_left";
+          moving = true;
+        }
+        if (keyStates["KeyD"]) {
+          playerVelocity.add(getSideVector().multiplyScalar(speedDelta));
+          if (!moving) animTarget = "walk_right";
+          moving = true;
+        }
+        if (
+          playerOnFloor &&
+          keyStates["Space"] &&
+          activeAction !== actions["jump"]
+        ) {
+          playerVelocity.y = 15;
+          animTarget = "jump";
+          moving = true;
+        }
+
+        // no interrumpir jump ni dying
+        const isLocked =
+          activeAction === actions["jump"] || activeAction === actions["dying"];
+        if (!isLocked) switchAnimation(animTarget);
+      }
 
       // ================== BUCLE DE ANIMACIÓN ==================
       function animate() {
+        const now = performance.now() / 1000;
         const deltaTime =
-          Math.min(0.05, performance.now() / 1000 - (window.lastTime || 0)) /
-          STEPS_PER_FRAME;
-        window.lastTime = performance.now() / 1000;
+          Math.min(0.05, now - (window.lastTime || now)) / STEPS_PER_FRAME;
+        window.lastTime = now;
+
+        if (mixer) mixer.update(deltaTime);
 
         for (let i = 0; i < STEPS_PER_FRAME; i++) {
           controls(deltaTime);
