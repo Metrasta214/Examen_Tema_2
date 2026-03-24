@@ -24,12 +24,13 @@
         <li><a href="#">Contacto</a></li>
       </ul>
     </nav>
+
     <div id="info">
-      MOUSE para mirar • WASD para mover • SPACE para saltar • Click para lanzar
-      bolas • K para dañarse
+      MOUSE para mirar • WASD para mover • SPACE para saltar • CLICK para
+      disparar • K para dañarse
     </div>
 
-    <!-- ================== HUD DE VIDA ================== -->
+    <!-- HUD VIDA -->
     <div
       id="hud"
       style="
@@ -69,7 +70,7 @@
       </div>
     </div>
 
-    <!-- ================== CROSSHAIR RE4 ================== -->
+    <!-- CROSSHAIR RE4 -->
     <div
       id="crosshair"
       style="
@@ -122,6 +123,43 @@
       </svg>
     </div>
 
+    <!-- FLASH DE DISPARO -->
+    <div
+      id="muzzle-flash"
+      style="
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(255, 220, 80, 0.18);
+        pointer-events: none;
+        z-index: 998;
+        opacity: 0;
+        transition: opacity 0.04s;
+      "
+    ></div>
+
+    <!-- HIT MARKER -->
+    <div
+      id="hit-marker"
+      style="
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        pointer-events: none;
+        z-index: 1000;
+        opacity: 0;
+        font-size: 22px;
+        color: #ff4444;
+        font-weight: bold;
+        text-shadow: 0 0 6px #000;
+      "
+    >
+      ✕
+    </div>
+
     <div id="container"></div>
 
     <script type="importmap">
@@ -154,15 +192,11 @@
       );
       camera.rotation.order = "YXZ";
 
-      const fillLight1 = new THREE.HemisphereLight(0x8dc1de, 0x00668d, 1.5);
-      fillLight1.position.set(2, 1, 1);
-      scene.add(fillLight1);
-
+      scene.add(new THREE.HemisphereLight(0x8dc1de, 0x00668d, 1.5));
       const directionalLight = new THREE.DirectionalLight(0xffffff, 2.5);
       directionalLight.position.set(-5, 25, -1);
       directionalLight.castShadow = true;
-      directionalLight.shadow.mapSize.width = 1024;
-      directionalLight.shadow.mapSize.height = 1024;
+      directionalLight.shadow.mapSize.set(1024, 1024);
       scene.add(directionalLight);
 
       const container = document.getElementById("container");
@@ -180,8 +214,6 @@
 
       // ================== VARIABLES GLOBALES ==================
       const GRAVITY = 30;
-      const NUM_SPHERES = 100;
-      const SPHERE_RADIUS = 0.2;
       const STEPS_PER_FRAME = 5;
 
       let worldBounds = null;
@@ -204,10 +236,9 @@
       const vector2 = new THREE.Vector3();
       const vector3 = new THREE.Vector3();
 
-      // ================== CÁMARA RE4 — estado interno ==================
-      // Ángulos de la cámara controlados por el mouse (independientes de camera.rotation)
-      let camYaw = 0; // rotación horizontal
-      let camPitch = 0; // rotación vertical
+      // ================== CÁMARA RE4 ==================
+      let camYaw = 0;
+      let camPitch = 0;
 
       // ================== SISTEMA DE VIDA ==================
       let playerHealth = 100;
@@ -220,23 +251,18 @@
         const pct = Math.max(0, playerHealth);
         healthBar.style.width = pct + "%";
         healthText.textContent = pct + " / 100";
-        if (pct > 50) {
-          healthBar.style.background =
-            "linear-gradient(90deg, #e53935, #ef9a9a)";
-        } else if (pct > 25) {
-          healthBar.style.background =
-            "linear-gradient(90deg, #f57c00, #ffcc80)";
-        } else {
-          healthBar.style.background =
-            "linear-gradient(90deg, #b71c1c, #e53935)";
-        }
+        if (pct > 50)
+          healthBar.style.background = "linear-gradient(90deg,#e53935,#ef9a9a)";
+        else if (pct > 25)
+          healthBar.style.background = "linear-gradient(90deg,#f57c00,#ffcc80)";
+        else
+          healthBar.style.background = "linear-gradient(90deg,#b71c1c,#e53935)";
       }
 
       function damagePlayer(amount) {
         if (isDead) return;
         playerHealth = Math.max(0, playerHealth - amount);
         updateHealthUI();
-        console.log("❤️ Vida:", playerHealth);
         if (playerHealth <= 0) die();
       }
 
@@ -244,8 +270,237 @@
         isDead = true;
         playerVelocity.set(0, 0, 0);
         switchAnimation("dying");
-        console.log("💀 PLAYER DEAD");
         setTimeout(() => location.reload(), 3000);
+      }
+
+      // ================== SONIDO DE DISPARO (Web Audio API) ==================
+      let audioCtx = null;
+
+      function initAudio() {
+        if (!audioCtx)
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+
+      function playGunshot() {
+        if (!audioCtx) return;
+
+        // disparo: ruido corto con envelope
+        const bufferSize = audioCtx.sampleRate * 0.15;
+        const buffer = audioCtx.createBuffer(
+          1,
+          bufferSize,
+          audioCtx.sampleRate,
+        );
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+          data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 4);
+        }
+
+        const source = audioCtx.createBufferSource();
+        source.buffer = buffer;
+
+        // filtro para que suene más a disparo y menos a ruido blanco
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = "bandpass";
+        filter.frequency.value = 180;
+        filter.Q.value = 0.8;
+
+        const gain = audioCtx.createGain();
+        gain.gain.setValueAtTime(3.5, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(
+          0.001,
+          audioCtx.currentTime + 0.15,
+        );
+
+        source.connect(filter);
+        filter.connect(gain);
+        gain.connect(audioCtx.destination);
+        source.start();
+      }
+
+      // ================== SISTEMA DE DISPARO (RAYCAST) ==================
+      const raycaster = new THREE.Raycaster();
+      const muzzleFlashEl = document.getElementById("muzzle-flash");
+      const hitMarkerEl = document.getElementById("hit-marker");
+
+      let flashTimeout = null;
+      let hitTimeout = null;
+      let canShoot = true;
+      const SHOOT_COOLDOWN = 250; // ms entre disparos
+
+      // líneas de impacto (trazadoras)
+      const bulletLines = [];
+
+      function shootRaycast() {
+        if (!canShoot || isDead) return;
+        canShoot = false;
+        setTimeout(() => (canShoot = true), SHOOT_COOLDOWN);
+
+        // sonido
+        playGunshot();
+
+        // flash de pantalla
+        muzzleFlashEl.style.opacity = "1";
+        clearTimeout(flashTimeout);
+        flashTimeout = setTimeout(
+          () => (muzzleFlashEl.style.opacity = "0"),
+          60,
+        );
+
+        // flash en la boca del arma
+        if (gunMesh) {
+          gunMesh.children.forEach((c) => {
+            if (c.isMuzzleFlash) c.visible = true;
+          });
+          setTimeout(() => {
+            if (gunMesh)
+              gunMesh.children.forEach((c) => {
+                if (c.isMuzzleFlash) c.visible = false;
+              });
+          }, 60);
+        }
+
+        // raycast desde el centro de la pantalla
+        raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+        const hits = raycaster.intersectObjects(scene.children, true);
+
+        // filtrar el propio personaje y arma
+        const filtered = hits.filter((h) => {
+          let obj = h.object;
+          while (obj) {
+            if (obj === playerModel || obj === gunMesh) return false;
+            obj = obj.parent;
+          }
+          return true;
+        });
+
+        if (filtered.length > 0) {
+          const hit = filtered[0];
+
+          // hit marker
+          hitMarkerEl.style.opacity = "1";
+          clearTimeout(hitTimeout);
+          hitTimeout = setTimeout(() => (hitMarkerEl.style.opacity = "0"), 120);
+
+          // marca de impacto (decal simple)
+          spawnImpactMark(hit.point, hit.face?.normal);
+
+          // línea trazadora
+          spawnBulletLine(
+            gunMesh ? getGunTipPosition() : camera.position.clone(),
+            hit.point,
+          );
+        } else {
+          // disparo al aire — línea larga
+          const far = raycaster.ray.origin
+            .clone()
+            .add(raycaster.ray.direction.clone().multiplyScalar(80));
+          spawnBulletLine(
+            gunMesh ? getGunTipPosition() : camera.position.clone(),
+            far,
+          );
+        }
+      }
+
+      function getGunTipPosition() {
+        const tip = new THREE.Vector3(0, 0, -0.35);
+        gunMesh.localToWorld(tip);
+        return tip;
+      }
+
+      function spawnImpactMark(point, normal) {
+        const geo = new THREE.SphereGeometry(0.04, 4, 4);
+        const mat = new THREE.MeshBasicMaterial({ color: 0x222222 });
+        const mark = new THREE.Mesh(geo, mat);
+        mark.position.copy(point);
+        if (normal) mark.position.addScaledVector(normal, 0.02);
+        scene.add(mark);
+        setTimeout(() => {
+          scene.remove(mark);
+          geo.dispose();
+          mat.dispose();
+        }, 4000);
+      }
+
+      function spawnBulletLine(from, to) {
+        const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
+        const mat = new THREE.LineBasicMaterial({
+          color: 0xffee88,
+          transparent: true,
+          opacity: 0.6,
+        });
+        const line = new THREE.Line(geo, mat);
+        scene.add(line);
+        bulletLines.push({ line, born: performance.now() });
+      }
+
+      function updateBulletLines() {
+        const now = performance.now();
+        for (let i = bulletLines.length - 1; i >= 0; i--) {
+          const { line, born } = bulletLines[i];
+          const age = now - born;
+          if (age > 80) {
+            scene.remove(line);
+            line.geometry.dispose();
+            line.material.dispose();
+            bulletLines.splice(i, 1);
+          } else {
+            line.material.opacity = 0.6 * (1 - age / 80);
+          }
+        }
+      }
+
+      // ================== ARMA GEOMÉTRICA ==================
+      let gunMesh = null;
+
+      function createGun() {
+        const gunGroup = new THREE.Group();
+
+        // cuerpo principal de la pistola
+        const bodyGeo = new THREE.BoxGeometry(0.06, 0.12, 0.32);
+        const bodyMat = new THREE.MeshLambertMaterial({ color: 0x222222 });
+        const body = new THREE.Mesh(bodyGeo, bodyMat);
+        body.castShadow = true;
+        gunGroup.add(body);
+
+        // cañón
+        const barrelGeo = new THREE.CylinderGeometry(0.018, 0.018, 0.22, 8);
+        const barrelMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+        const barrel = new THREE.Mesh(barrelGeo, barrelMat);
+        barrel.rotation.x = Math.PI / 2;
+        barrel.position.set(0, 0.01, -0.22);
+        gunGroup.add(barrel);
+
+        // mango
+        const gripGeo = new THREE.BoxGeometry(0.055, 0.13, 0.09);
+        const gripMat = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
+        const grip = new THREE.Mesh(gripGeo, gripMat);
+        grip.position.set(0, -0.115, 0.07);
+        grip.rotation.x = 0.18;
+        gunGroup.add(grip);
+
+        // gatillo
+        const triggerGeo = new THREE.BoxGeometry(0.012, 0.04, 0.02);
+        const triggerMat = new THREE.MeshLambertMaterial({ color: 0x333333 });
+        const trigger = new THREE.Mesh(triggerGeo, triggerMat);
+        trigger.position.set(0, -0.04, 0.01);
+        gunGroup.add(trigger);
+
+        // flash de boca del cañón (oculto por defecto)
+        const flashGeo = new THREE.SphereGeometry(0.045, 6, 6);
+        const flashMat = new THREE.MeshBasicMaterial({
+          color: 0xffdd00,
+          transparent: true,
+          opacity: 0.9,
+        });
+        const flash = new THREE.Mesh(flashGeo, flashMat);
+        flash.position.set(0, 0, -0.35);
+        flash.visible = false;
+        flash.isMuzzleFlash = true;
+        gunGroup.add(flash);
+
+        scene.add(gunGroup);
+        return gunGroup;
       }
 
       // ================== CONTROLES Y EVENTOS ==================
@@ -255,22 +510,22 @@
       });
       document.addEventListener("keyup", (e) => (keyStates[e.code] = false));
 
-      container.addEventListener("mousedown", () => {
+      container.addEventListener("mousedown", (e) => {
+        initAudio(); // activar AudioContext con gesto del usuario
         document.body.requestPointerLock();
         mouseTime = performance.now();
       });
 
-      document.addEventListener("mouseup", () => {
-        if (document.pointerLockElement) throwBall();
+      document.addEventListener("mouseup", (e) => {
+        if (document.pointerLockElement === document.body) {
+          shootRaycast(); // ✅ disparo en lugar de bola
+        }
       });
 
-      // ✅ RE4: el mouse acumula yaw/pitch en variables propias
-      // No tocamos camera.rotation directamente aquí
       document.addEventListener("mousemove", (e) => {
         if (document.pointerLockElement === document.body) {
           camYaw -= e.movementX * 0.002;
           camPitch -= e.movementY * 0.002;
-          // limitar pitch para no voltear
           camPitch = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, camPitch));
         }
       });
@@ -281,43 +536,7 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
       });
 
-      // ================== ESFERAS ==================
-      const sphereGeometry = new THREE.IcosahedronGeometry(SPHERE_RADIUS, 5);
-      const sphereMaterial = new THREE.MeshLambertMaterial({ color: 0xdede8d });
-      const spheres = [];
-      let sphereIdx = 0;
-
-      for (let i = 0; i < NUM_SPHERES; i++) {
-        const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
-        sphere.castShadow = true;
-        sphere.receiveShadow = true;
-        scene.add(sphere);
-        spheres.push({
-          mesh: sphere,
-          collider: new THREE.Sphere(
-            new THREE.Vector3(0, -100, 0),
-            SPHERE_RADIUS,
-          ),
-          velocity: new THREE.Vector3(),
-        });
-      }
-
-      // ================== LÓGICA DE FÍSICAS ==================
-      function throwBall() {
-        const sphere = spheres[sphereIdx];
-        camera.getWorldDirection(playerDirection);
-        sphere.collider.center
-          .copy(playerCollider.end)
-          .addScaledVector(playerDirection, playerCollider.radius * 1.5);
-        const impulse =
-          15 + 30 * (1 - Math.exp((mouseTime - performance.now()) * 0.001));
-        sphere.velocity
-          .copy(playerDirection)
-          .multiplyScalar(impulse)
-          .addScaledVector(playerVelocity, 2);
-        sphereIdx = (sphereIdx + 1) % spheres.length;
-      }
-
+      // ================== FÍSICAS ==================
       function playerCollisions() {
         const result = worldOctree.capsuleIntersect(playerCollider);
         playerOnFloor = false;
@@ -352,51 +571,63 @@
         );
         playerCollisions();
 
-        // ================= PERSONAJE rota con el yaw =================
-        if (playerModel) {
-          const center = new THREE.Vector3()
-            .addVectors(playerCollider.start, playerCollider.end)
-            .multiplyScalar(0.5);
-          playerModel.position.copy(center);
-          playerModel.position.y -= 1;
-          // personaje siempre mira hacia donde apunta la cámara (yaw)
-          playerModel.rotation.y = camYaw;
-        }
-
-        // ================= CÁMARA ESTILO RE4 =================
-        // Punto de referencia: torso del jugador
+        // torso del jugador
         const torso = new THREE.Vector3()
           .addVectors(playerCollider.start, playerCollider.end)
           .multiplyScalar(0.5);
 
-        // Dirección horizontal de la cámara basada en yaw
+        // personaje rota con el yaw
+        if (playerModel) {
+          playerModel.position.copy(torso);
+          playerModel.position.y -= 1;
+          playerModel.rotation.y = camYaw + Math.PI;
+        }
+
+        // ================= ARMA — pegada al hombro derecho =================
+        if (gunMesh) {
+          // posición relativa al hombro del personaje
+          const sinYaw = Math.sin(camYaw);
+          const cosYaw = Math.cos(camYaw);
+
+          // hombro derecho del personaje
+          const shoulderOffset = new THREE.Vector3(
+            cosYaw * 0.28 - sinYaw * 0.12, // derecha
+            0.55, // altura del hombro
+            sinYaw * 0.28 + cosYaw * 0.12, // adelante un poco
+          );
+
+          gunMesh.position.copy(torso).add(shoulderOffset);
+
+          // la pistola apunta hacia donde mira la cámara
+          const quatY = new THREE.Quaternion().setFromAxisAngle(
+            new THREE.Vector3(0, 1, 0),
+            camYaw,
+          );
+          const quatX = new THREE.Quaternion().setFromAxisAngle(
+            new THREE.Vector3(1, 0, 0),
+            camPitch,
+          );
+          gunMesh.quaternion.copy(quatY).multiply(quatX);
+        }
+
+        // ================= CÁMARA RE4 — hombro derecho ✅ =================
         const sinYaw = Math.sin(camYaw);
         const cosYaw = Math.cos(camYaw);
 
-        // Vector "adelante" de la cámara (horizontal)
-        const fwdX = -sinYaw;
-        const fwdZ = -cosYaw;
+        const distBack = 2.5;
+        const distRight = 0.6; // ✅ positivo = hombro derecho (corregido)
+        const distUp = 1.4;
 
-        // Vector "derecha" de la cámara
-        const rightX = cosYaw;
-        const rightZ = -sinYaw;
-
-        // Parámetros RE4 — hombro derecho
-        const distBack = 2.5; // distancia detrás del jugador
-        const distRight = 0.6; // offset al hombro derecho
-        const distUp = 1.4; // altura del hombro
-
-        // Posición base de la cámara (hombro derecho)
+        // cámara detrás y a la DERECHA del jugador
         const camPos = new THREE.Vector3(
-          torso.x + fwdX * -distBack + rightX * distRight,
+          torso.x + sinYaw * distBack + cosYaw * distRight, // ✅ corregido
           torso.y + distUp,
-          torso.z + fwdZ * -distBack + rightZ * distRight,
+          torso.z + cosYaw * distBack - sinYaw * distRight, // ✅ corregido
         );
 
         camera.position.copy(camPos);
 
-        // ✅ Aplicar rotación con quaternion para evitar el giro infinito
-        // Primero rotamos en Y (yaw), luego en X local (pitch)
+        // rotación de la cámara con quaternion (sin lookAt → sin giro infinito)
         const quatY = new THREE.Quaternion().setFromAxisAngle(
           new THREE.Vector3(0, 1, 0),
           camYaw,
@@ -411,8 +642,7 @@
       function constrainPlayer() {
         if (!worldBounds) return;
         const padding = 0.2;
-        const min = worldBounds.min;
-        const max = worldBounds.max;
+        const { min, max } = worldBounds;
         playerCollider.start.x = Math.max(
           min.x + padding,
           Math.min(max.x - padding, playerCollider.start.x),
@@ -460,67 +690,15 @@
               .multiplyScalar(normal.dot(sphere.velocity));
             playerVelocity.add(v2).sub(v1);
             sphere.velocity.add(v1).sub(v2);
-            const d = (r - Math.sqrt(d2)) / 2;
-            sphere.collider.center.addScaledVector(normal, -d);
+            sphere.collider.center.addScaledVector(
+              normal,
+              -(r - Math.sqrt(d2)) / 2,
+            );
           }
         }
-      }
-
-      function spheresCollisions() {
-        for (let i = 0; i < spheres.length; i++) {
-          for (let j = i + 1; j < spheres.length; j++) {
-            const s1 = spheres[i],
-              s2 = spheres[j];
-            const d2 = s1.collider.center.distanceToSquared(s2.collider.center);
-            const r2 = (s1.collider.radius + s2.collider.radius) ** 2;
-            if (d2 < r2) {
-              const normal = vector1
-                .subVectors(s1.collider.center, s2.collider.center)
-                .normalize();
-              const v1 = vector2
-                .copy(normal)
-                .multiplyScalar(normal.dot(s1.velocity));
-              const v2 = vector3
-                .copy(normal)
-                .multiplyScalar(normal.dot(s2.velocity));
-              s1.velocity.add(v2).sub(v1);
-              s2.velocity.add(v1).sub(v2);
-              const d =
-                (s1.collider.radius + s2.collider.radius - Math.sqrt(d2)) / 2;
-              s1.collider.center.addScaledVector(normal, d);
-              s2.collider.center.addScaledVector(normal, -d);
-            }
-          }
-        }
-      }
-
-      function updateSpheres(deltaTime) {
-        spheres.forEach((sphere) => {
-          sphere.collider.center.addScaledVector(sphere.velocity, deltaTime);
-          const result = worldOctree.sphereIntersect(sphere.collider);
-          if (result) {
-            sphere.velocity.addScaledVector(
-              result.normal,
-              -result.normal.dot(sphere.velocity) * 1.5,
-            );
-            sphere.collider.center.add(
-              result.normal.multiplyScalar(result.depth),
-            );
-          } else {
-            sphere.velocity.y -= GRAVITY * deltaTime;
-          }
-          sphere.velocity.addScaledVector(
-            sphere.velocity,
-            Math.exp(-1.5 * deltaTime) - 1,
-          );
-          playerSphereCollision(sphere);
-        });
-        spheresCollisions();
-        spheres.forEach((s) => s.mesh.position.copy(s.collider.center));
       }
 
       // ================== CONTROLES DE JUGADOR ==================
-      // ✅ RE4: forward/side se calculan desde camYaw, no desde camera.rotation
       function getForwardVector() {
         playerDirection.set(-Math.sin(camYaw), 0, -Math.cos(camYaw));
         return playerDirection;
@@ -546,7 +724,6 @@
             worldBounds.max.z + 2,
           );
           playerVelocity.set(0, 0, 0);
-          camera.position.copy(playerCollider.end);
         }
       }
 
@@ -592,10 +769,7 @@
       loader.load(
         "abandoned_warehouse.glb",
         (gltf) => {
-          console.log("MODELO CARGADO ✅");
           const model = gltf.scene;
-          model.position.set(0, 0, 0);
-          model.scale.set(1, 1, 1);
           scene.add(model);
           model.updateWorldMatrix(true, true);
           worldOctree.fromGraphNode(model);
@@ -619,27 +793,16 @@
           floor.geometry.dispose();
           floor.material.dispose();
 
-          function getSpawnPosition(
-            center,
-            minDistance = 10,
-            maxDistance = 25,
-          ) {
-            const angle = Math.random() * Math.PI * 2;
-            const distance =
-              minDistance + Math.random() * (maxDistance - minDistance);
-            return {
-              x: center.x + Math.cos(angle) * distance,
-              z: center.z + Math.sin(angle) * distance,
-            };
-          }
-
-          const spawn = getSpawnPosition(center, 15, 30);
+          const angle = Math.random() * Math.PI * 2;
+          const dist = 15 + Math.random() * 15;
+          const spawn = {
+            x: center.x + Math.cos(angle) * dist,
+            z: center.z + Math.sin(angle) * dist,
+          };
           playerCollider.start.set(spawn.x, box.min.y + 1, spawn.z);
           playerCollider.end.set(spawn.x, box.min.y + 2.5, spawn.z);
-          camera.position.copy(playerCollider.end);
 
           const spread = 25;
-
           function getValidPosition(x, z, minDist = 12) {
             const offsets = [
               [0, 0],
@@ -668,7 +831,6 @@
             scene.add(car);
             worldOctree.fromGraphNode(car);
           });
-
           loaderExtras.load(
             "low_poly_car_-_chevrolet_c10_pickup_1963.glb",
             (g) => {
@@ -683,7 +845,6 @@
               worldOctree.fromGraphNode(car2);
             },
           );
-
           loaderExtras.load("worn_shed_pbr_game-ready.glb", (g) => {
             const shed = g.scene;
             const v = getValidPosition(
@@ -695,7 +856,6 @@
             scene.add(shed);
             worldOctree.fromGraphNode(shed);
           });
-
           loaderExtras.load("low_poly_rocks.glb", (g) => {
             const rock = g.scene;
             [
@@ -713,7 +873,6 @@
               worldOctree.fromGraphNode(r);
             });
           });
-
           loaderExtras.load("stylized_low_poly_tree_-_game-ready.glb", (g) => {
             const tree = g.scene;
             [
@@ -733,6 +892,8 @@
               worldOctree.fromGraphNode(t);
             });
           });
+
+          console.log("MODELO CARGADO ✅");
         },
         undefined,
         (e) => console.error("ERROR AL CARGAR EL MODELO", e),
@@ -765,7 +926,6 @@
         scene.add(playerModel);
 
         mixer = new THREE.AnimationMixer(playerModel);
-
         const idleAction = mixer.clipAction(gltf.animations[0]);
         idleAction.setLoop(THREE.LoopRepeat, Infinity);
         actions["idle"] = idleAction;
@@ -780,9 +940,12 @@
         mixer.addEventListener("finished", () => {
           if (activeAction === actions["jump"]) switchAnimation("idle");
         });
+
+        // crear arma una vez que el personaje existe
+        gunMesh = createGun();
       });
 
-      // ✅ FUNCIÓN INTOCABLE — exactamente como la pidió el usuario
+      // ✅ FUNCIÓN INTOCABLE
       function loadAnimation(file, name, loopMode) {
         playerLoader.load(
           file,
@@ -817,31 +980,24 @@
               case "idle":
                 action.timeScale = 5.0;
                 break;
-
-              case "run": // pistol run
+              case "run":
                 action.timeScale = 5.0;
                 break;
-
               case "walk_left":
                 action.timeScale = 7.0;
                 break;
-
               case "walk_right":
                 action.timeScale = 7.0;
                 break;
-
               case "walk_back":
                 action.timeScale = 8.0;
                 break;
-
               case "jump":
                 action.timeScale = 5.0;
                 break;
-
               case "dying":
                 action.timeScale = 5.0;
                 break;
-
               default:
                 action.timeScale = 5.0;
             }
@@ -929,9 +1085,10 @@
           controls(deltaTime);
           updatePlayer(deltaTime);
           constrainPlayer();
-          updateSpheres(deltaTime);
           teleportPlayerIfOob();
         }
+
+        updateBulletLines();
 
         renderer.render(scene, camera);
         stats.update();
