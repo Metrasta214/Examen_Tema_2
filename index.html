@@ -298,6 +298,7 @@
 
     <script type="module">
       import * as THREE from "three";
+      THREE.Cache.enabled = true;
       import Stats from "three/addons/libs/stats.module.js";
       import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
       import { Octree } from "three/addons/math/Octree.js";
@@ -319,6 +320,9 @@
           loadingBar.style.width = pct + "%";
           loadingLabel.textContent = label + " ✓";
           if (loadDone >= loadTotal) {
+            // 🔥 Compilar shaders antes de mostrar escena
+            renderer.compile(scene, camera);
+
             setTimeout(() => {
               loadingScreen.style.opacity = "0";
               setTimeout(() => (loadingScreen.style.display = "none"), 800);
@@ -353,6 +357,8 @@
 
       const container = document.getElementById("container");
       const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.physicallyCorrectLights = false;
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // RAM: cap pixel ratio
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.shadowMap.enabled = true;
@@ -514,21 +520,27 @@
         { file: "dying.glb", key: "dying" },
       ];
       _clipFiles.forEach(({ file, key }) => {
+        const done = trackLoad("Anim enemigo: " + key);
+
         enemyLoader.load(
           file,
           (gltf) => {
             let clip = gltf.animations[0];
-            // Quitar root motion igual que en el jugador
+
             clip.tracks = clip.tracks.filter(
               (t) => !t.name.toLowerCase().includes("position"),
             );
+
             sharedClips[key] = clip;
+
             onClipLoaded();
+            done();
           },
           undefined,
           () => {
             console.warn("⚠️ Clip enemigo no cargado:", file);
             onClipLoaded();
+            done();
           },
         );
       });
@@ -1308,7 +1320,12 @@
             });
             doneTrees();
           });
-
+          // 🔥 Calentar materiales/texturas
+          scene.traverse((obj) => {
+            if (obj.isMesh && obj.material) {
+              obj.material.needsUpdate = true;
+            }
+          });
           doneWarehouse();
 
           // Guardar posiciones; spawn ocurre cuando los 4 clips estén listos
@@ -1358,9 +1375,36 @@
         idleAction.play();
         activeAction = idleAction;
 
-        ANIM_FILES.forEach(({ file, name, loop }) =>
-          loadAnimation(file, name, loop),
-        );
+        ANIM_FILES.forEach(({ file, name, loop }) => {
+          const done = trackLoad("Cargando animación " + name);
+
+          playerLoader.load(
+            file,
+            (gltf) => {
+              let clip = gltf.animations[0];
+
+              clip.tracks = clip.tracks.filter(
+                (t) => !t.name.toLowerCase().includes("position"),
+              );
+
+              const action = mixer.clipAction(clip);
+
+              action.setLoop(loop, loop === THREE.LoopOnce ? 1 : Infinity);
+              if (loop === THREE.LoopOnce) action.clampWhenFinished = true;
+
+              action.timeScale = 5.0;
+              actions[name] = action;
+
+              done(); // 🔥 importante
+            },
+            undefined,
+            () => {
+              console.warn("⚠️ Error anim:", file);
+              done();
+            },
+          );
+        });
+
         mixer.addEventListener("finished", () => {
           if (activeAction === actions["jump"]) switchAnimation("idle");
         });
