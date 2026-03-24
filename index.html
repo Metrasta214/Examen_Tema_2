@@ -69,6 +69,59 @@
       </div>
     </div>
 
+    <!-- ================== CROSSHAIR RE4 ================== -->
+    <div
+      id="crosshair"
+      style="
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        pointer-events: none;
+        z-index: 999;
+      "
+    >
+      <svg width="24" height="24" viewBox="0 0 24 24">
+        <line
+          x1="12"
+          y1="2"
+          x2="12"
+          y2="8"
+          stroke="white"
+          stroke-width="1.5"
+          opacity="0.9"
+        />
+        <line
+          x1="12"
+          y1="16"
+          x2="12"
+          y2="22"
+          stroke="white"
+          stroke-width="1.5"
+          opacity="0.9"
+        />
+        <line
+          x1="2"
+          y1="12"
+          x2="8"
+          y2="12"
+          stroke="white"
+          stroke-width="1.5"
+          opacity="0.9"
+        />
+        <line
+          x1="16"
+          y1="12"
+          x2="22"
+          y2="12"
+          stroke="white"
+          stroke-width="1.5"
+          opacity="0.9"
+        />
+        <circle cx="12" cy="12" r="1.5" fill="red" opacity="0.9" />
+      </svg>
+    </div>
+
     <div id="container"></div>
 
     <script type="importmap">
@@ -94,7 +147,7 @@
       scene.fog = new THREE.Fog(0x88ccee, 0, 50);
 
       const camera = new THREE.PerspectiveCamera(
-        80,
+        70,
         window.innerWidth / window.innerHeight,
         0.1,
         1000,
@@ -151,6 +204,11 @@
       const vector2 = new THREE.Vector3();
       const vector3 = new THREE.Vector3();
 
+      // ================== CÁMARA RE4 — estado interno ==================
+      // Ángulos de la cámara controlados por el mouse (independientes de camera.rotation)
+      let camYaw = 0; // rotación horizontal
+      let camPitch = 0; // rotación vertical
+
       // ================== SISTEMA DE VIDA ==================
       let playerHealth = 100;
       let isDead = false;
@@ -191,7 +249,6 @@
       }
 
       // ================== CONTROLES Y EVENTOS ==================
-      // ✅ un solo listener que maneja keyStates y tecla K
       document.addEventListener("keydown", (e) => {
         keyStates[e.code] = true;
         if (e.code === "KeyK") damagePlayer(50);
@@ -207,14 +264,14 @@
         if (document.pointerLockElement) throwBall();
       });
 
+      // ✅ RE4: el mouse acumula yaw/pitch en variables propias
+      // No tocamos camera.rotation directamente aquí
       document.addEventListener("mousemove", (e) => {
         if (document.pointerLockElement === document.body) {
-          camera.rotation.y -= e.movementX / 500;
-          camera.rotation.x -= e.movementY / 500;
-          camera.rotation.x = Math.max(
-            -Math.PI / 2,
-            Math.min(Math.PI / 2, camera.rotation.x),
-          );
+          camYaw -= e.movementX * 0.002;
+          camPitch -= e.movementY * 0.002;
+          // limitar pitch para no voltear
+          camPitch = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, camPitch));
         }
       });
 
@@ -295,54 +352,60 @@
         );
         playerCollisions();
 
+        // ================= PERSONAJE rota con el yaw =================
         if (playerModel) {
           const center = new THREE.Vector3()
             .addVectors(playerCollider.start, playerCollider.end)
             .multiplyScalar(0.5);
           playerModel.position.copy(center);
           playerModel.position.y -= 1;
-          const dir = new THREE.Vector3();
-          camera.getWorldDirection(dir);
-          playerModel.rotation.y = Math.atan2(dir.x, dir.z);
+          // personaje siempre mira hacia donde apunta la cámara (yaw)
+          playerModel.rotation.y = camYaw;
         }
 
-        const direction = new THREE.Vector3();
-        camera.getWorldDirection(direction);
-        const distance = 2.8; // 🔥 más cerca
-        const height = 1.2; // 🔥 altura del pecho
-        const sideOffset = 0.6; // 🔥 hombro (más natural)
-
-        const forward = new THREE.Vector3();
-        camera.getWorldDirection(forward);
-        forward.normalize();
-
-        // 🔥 centro del cuerpo (TORSO)
+        // ================= CÁMARA ESTILO RE4 =================
+        // Punto de referencia: torso del jugador
         const torso = new THREE.Vector3()
           .addVectors(playerCollider.start, playerCollider.end)
           .multiplyScalar(0.5);
 
-        // atrás del jugador
-        const backward = forward.clone().multiplyScalar(-distance);
+        // Dirección horizontal de la cámara basada en yaw
+        const sinYaw = Math.sin(camYaw);
+        const cosYaw = Math.cos(camYaw);
 
-        // lado derecho (hombro)
-        const right = new THREE.Vector3()
-          .crossVectors(forward, camera.up)
-          .normalize()
-          .multiplyScalar(sideOffset);
+        // Vector "adelante" de la cámara (horizontal)
+        const fwdX = -sinYaw;
+        const fwdZ = -cosYaw;
 
-        // posición final
-        const cameraPosition = torso.clone();
-        cameraPosition.add(backward);
-        cameraPosition.add(right);
-        cameraPosition.y += height;
+        // Vector "derecha" de la cámara
+        const rightX = cosYaw;
+        const rightZ = -sinYaw;
 
-        camera.position.copy(cameraPosition);
+        // Parámetros RE4 — hombro derecho
+        const distBack = 2.5; // distancia detrás del jugador
+        const distRight = 0.6; // offset al hombro derecho
+        const distUp = 1.4; // altura del hombro
 
-        // 🔥 mirar al torso ligeramente arriba
-        const target = torso.clone();
-        target.y += 0.6;
+        // Posición base de la cámara (hombro derecho)
+        const camPos = new THREE.Vector3(
+          torso.x + fwdX * -distBack + rightX * distRight,
+          torso.y + distUp,
+          torso.z + fwdZ * -distBack + rightZ * distRight,
+        );
 
-        camera.lookAt(target);
+        camera.position.copy(camPos);
+
+        // ✅ Aplicar rotación con quaternion para evitar el giro infinito
+        // Primero rotamos en Y (yaw), luego en X local (pitch)
+        const quatY = new THREE.Quaternion().setFromAxisAngle(
+          new THREE.Vector3(0, 1, 0),
+          camYaw,
+        );
+        const quatX = new THREE.Quaternion().setFromAxisAngle(
+          new THREE.Vector3(1, 0, 0),
+          camPitch,
+        );
+        camera.quaternion.copy(quatY).multiply(quatX);
       }
 
       function constrainPlayer() {
@@ -457,18 +520,14 @@
       }
 
       // ================== CONTROLES DE JUGADOR ==================
+      // ✅ RE4: forward/side se calculan desde camYaw, no desde camera.rotation
       function getForwardVector() {
-        camera.getWorldDirection(playerDirection);
-        playerDirection.y = 0;
-        playerDirection.normalize();
+        playerDirection.set(-Math.sin(camYaw), 0, -Math.cos(camYaw));
         return playerDirection;
       }
 
       function getSideVector() {
-        camera.getWorldDirection(playerDirection);
-        playerDirection.y = 0;
-        playerDirection.normalize();
-        playerDirection.cross(camera.up);
+        playerDirection.set(Math.cos(camYaw), 0, -Math.sin(camYaw));
         return playerDirection;
       }
 
@@ -545,23 +604,6 @@
           worldBounds = box;
           const center = new THREE.Vector3();
           box.getCenter(center);
-
-          function getSpawnPosition(
-            center,
-            minDistance = 10,
-            maxDistance = 25,
-          ) {
-            const angle = Math.random() * Math.PI * 2;
-
-            const distance =
-              minDistance + Math.random() * (maxDistance - minDistance);
-
-            const x = center.x + Math.cos(angle) * distance;
-            const z = center.z + Math.sin(angle) * distance;
-
-            return { x, z };
-          }
-
           const size = new THREE.Vector3();
           box.getSize(size);
 
@@ -576,15 +618,28 @@
           scene.remove(floor);
           floor.geometry.dispose();
           floor.material.dispose();
-          const spawn = getSpawnPosition(center, 15, 30);
 
+          function getSpawnPosition(
+            center,
+            minDistance = 10,
+            maxDistance = 25,
+          ) {
+            const angle = Math.random() * Math.PI * 2;
+            const distance =
+              minDistance + Math.random() * (maxDistance - minDistance);
+            return {
+              x: center.x + Math.cos(angle) * distance,
+              z: center.z + Math.sin(angle) * distance,
+            };
+          }
+
+          const spawn = getSpawnPosition(center, 15, 30);
           playerCollider.start.set(spawn.x, box.min.y + 1, spawn.z);
           playerCollider.end.set(spawn.x, box.min.y + 2.5, spawn.z);
-
-          camera.position.copy(playerCollider.end);
           camera.position.copy(playerCollider.end);
 
           const spread = 25;
+
           function getValidPosition(x, z, minDist = 12) {
             const offsets = [
               [0, 0],
@@ -613,6 +668,7 @@
             scene.add(car);
             worldOctree.fromGraphNode(car);
           });
+
           loaderExtras.load(
             "low_poly_car_-_chevrolet_c10_pickup_1963.glb",
             (g) => {
@@ -627,6 +683,7 @@
               worldOctree.fromGraphNode(car2);
             },
           );
+
           loaderExtras.load("worn_shed_pbr_game-ready.glb", (g) => {
             const shed = g.scene;
             const v = getValidPosition(
@@ -638,6 +695,7 @@
             scene.add(shed);
             worldOctree.fromGraphNode(shed);
           });
+
           loaderExtras.load("low_poly_rocks.glb", (g) => {
             const rock = g.scene;
             [
@@ -655,6 +713,7 @@
               worldOctree.fromGraphNode(r);
             });
           });
+
           loaderExtras.load("stylized_low_poly_tree_-_game-ready.glb", (g) => {
             const tree = g.scene;
             [
@@ -687,7 +746,6 @@
 
       const playerLoader = new GLTFLoader().setPath("./models/player/");
 
-      // ✅ mapa de archivos con nombres SIN espacios → nombre interno
       const ANIM_FILES = [
         { file: "walk_left.glb", name: "walk_left", loop: THREE.LoopRepeat },
         { file: "walk_right.glb", name: "walk_right", loop: THREE.LoopRepeat },
@@ -715,7 +773,6 @@
         activeAction = idleAction;
         console.log("✅ Animación cargada: idle");
 
-        // cargar el resto DESPUÉS de que mixer existe
         ANIM_FILES.forEach(({ file, name, loop }) =>
           loadAnimation(file, name, loop),
         );
@@ -725,6 +782,7 @@
         });
       });
 
+      // ✅ FUNCIÓN INTOCABLE — exactamente como la pidió el usuario
       function loadAnimation(file, name, loopMode) {
         playerLoader.load(
           file,
@@ -853,7 +911,6 @@
           moving = true;
         }
 
-        // no interrumpir jump ni dying
         const isLocked =
           activeAction === actions["jump"] || activeAction === actions["dying"];
         if (!isLocked) switchAnimation(animTarget);
